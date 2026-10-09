@@ -32,24 +32,23 @@ class AgentGraphBuilder:
     The graph implements a three-node RAG pipeline:
 
         [START]
-           │
-           ▼
-    query_rewrite_node   ← rewrites query for better retrieval
-           │
-           ▼
-    retrieval_node       ← fetches relevant chunks from ChromaDB
-           │
-           ▼ (conditional edge via should_retry_retrieval)
-           │
-     ┌─────┴──────┐
-     │            │
-  "generate"    "end"
-     │            │
-     ▼            ▼
-generation_node  [END]   ← hallucination guard fires here
-     │
-     ▼
-   [END]
+           |
+           v
+    query_rewrite_node
+           |
+           v
+    retrieval_node
+           |
+           v
+      +----+----+
+      |         |
+   generate    end
+      |         |
+      v         v
+    generation  END
+      |
+      v
+     END
 
     The checkpointer (MemorySaver) enables multi-turn conversation:
     each thread_id maintains its own message history and state,
@@ -63,9 +62,17 @@ generation_node  [END]   ← hallucination guard fires here
     -------
     >>> builder = AgentGraphBuilder()
     >>> graph = builder.build()
-    >>> config = {"configurable": {"thread_id": "user-session-001"}}
+    >>> config = {
+    ...     "configurable": {
+    ...         "thread_id": "user-session-001"
+    ...     }
+    ... }
     >>> result = graph.invoke(
-    ...     {"messages": [HumanMessage(content="Explain LSTMs")]},
+    ...     {
+    ...         "messages": [
+    ...             HumanMessage(content="Explain LSTMs")
+    ...         ]
+    ...     },
     ...     config=config
     ... )
     >>> print(result["final_response"].answer)
@@ -88,29 +95,59 @@ generation_node  [END]   ← hallucination guard fires here
         The compiled graph is thread-safe and can be shared across
         multiple Streamlit sessions via st.cache_resource.
         """
-        # TODO: implement
-        # 1. graph = StateGraph(AgentState)
-        #
-        # 2. Add nodes:
-        #    graph.add_node("query_rewrite", query_rewrite_node)
-        #    graph.add_node("retrieval", retrieval_node)
-        #    graph.add_node("generation", generation_node)
-        #
-        # 3. Add edges:
-        #    graph.add_edge(START, "query_rewrite")
-        #    graph.add_edge("query_rewrite", "retrieval")
-        #
-        # 4. Add conditional edge from retrieval:
-        #    graph.add_conditional_edges(
-        #        "retrieval",
-        #        should_retry_retrieval,
-        #        {"generate": "generation", "end": END}
-        #    )
-        #
-        # 5. graph.add_edge("generation", END)
-        #
-        # 6. return graph.compile(checkpointer=self._checkpointer)
-        raise NotImplementedError
+
+        # IMPLEMENTED: starter LangGraph compatibility
+
+        # 1. Create graph using AgentState
+        graph = StateGraph(AgentState)
+
+        # 2. Add nodes
+        graph.add_node(
+            "query_rewrite",
+            query_rewrite_node,
+        )
+
+        graph.add_node(
+            "retrieval",
+            retrieval_node,
+        )
+
+        graph.add_node(
+            "generation",
+            generation_node,
+        )
+
+        # 3. Add normal edges
+        graph.add_edge(
+            START,
+            "query_rewrite",
+        )
+
+        graph.add_edge(
+            "query_rewrite",
+            "retrieval",
+        )
+
+        # 4. Conditional edge after retrieval
+        graph.add_conditional_edges(
+            "retrieval",
+            should_retry_retrieval,
+            {
+                "generate": "generation",
+                "end": END,
+            },
+        )
+
+        # 5. Generation finishes the workflow
+        graph.add_edge(
+            "generation",
+            END,
+        )
+
+        # 6. Compile with conversation memory
+        return graph.compile(
+            checkpointer=self._checkpointer
+        )
 
 
 @lru_cache(maxsize=1)
